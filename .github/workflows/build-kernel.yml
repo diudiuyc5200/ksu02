@@ -127,15 +127,20 @@ jobs:
             echo "Detected antman script"
             wget -O antman.sh "$SOURCE" || { echo "Download failed"; exit 1; }
             chmod +x antman.sh
-            CLANG_VERSION=$(echo "$BRANCH" | sed 's/clang-//g' | sed 's/^v//g')
-            if [ -z "$CLANG_VERSION" ]; then
-                CLANG_VERSION="18"
+            # ===== 修复：使用正确的 --sync 参数 =====
+            # 根据 BRANCH 决定是同步最新版还是指定 tag
+            if [ -z "$BRANCH" ] || [ "$BRANCH" = "latest" ]; then
+                # 默认同步最新版本
+                ./antman.sh --sync
+            else
+                # 同步指定的 build tag（如 25032024）
+                ./antman.sh --sync="$BRANCH"
             fi
-            echo "Installing Clang version: $CLANG_VERSION"
-            ./antman.sh --install="$CLANG_VERSION"
+            # antman 安装后的目录是 neutron-clang
             if [ -d "neutron-clang" ]; then
                 mv neutron-clang clang-aosp
             else
+                # 如果目录名有变化，尝试查找并重命名
                 find . -maxdepth 1 -type d -name "*neutron*" -exec mv {} clang-aosp \; 2>/dev/null || true
             fi
             rm -f antman.sh
