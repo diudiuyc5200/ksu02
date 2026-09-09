@@ -120,83 +120,88 @@ jobs:
         echo "Cleaned SOURCE: [$SOURCE]"
         echo "Cleaned BRANCH: [$BRANCH]"
         
-        # 判断是否为 git 仓库
-        if [[ "$SOURCE" =~ \.git$ ]] || [[ "$SOURCE" =~ github ]] || [[ "$SOURCE" =~ gitlab ]] || [[ "$SOURCE" =~ gitee ]]; then
-            # ---------- Git 仓库 ----------
-            if [[ "$SOURCE" == *.tar.gz ]] || [[ "$SOURCE" == *.tar.xz ]] || [[ "$SOURCE" == *.tgz ]] || [[ "$SOURCE" == *.txz ]]; then
-                # 压缩包格式的 release
-                if [[ "$SOURCE" == *.tar.xz ]] || [[ "$SOURCE" == *.txz ]]; then
-                    wget -O clang.tar.xz "$SOURCE" || { echo "Download failed"; exit 1; }
-                    mkdir -p clang-aosp
-                    tar -C clang-aosp/ -xvf clang.tar.xz
-                else
-                    wget -O clang.tar.gz "$SOURCE" || { echo "Download failed"; exit 1; }
-                    mkdir -p clang-aosp
-                    tar -C clang-aosp/ -zxvf clang.tar.gz
-                fi
-            else
-                # 标准 git clone
-                echo "Cloning from: $SOURCE"
-                git clone "$SOURCE" -b "$BRANCH" clang-aosp --depth=1 || {
-                    echo "Branch $BRANCH not found, trying default branch..."
-                    git clone "$SOURCE" clang-aosp --depth=1
-                }
+        # ===== 修复：优先根据文件名/扩展名判断类型，而不是根据 URL 是否包含 github =====
+        
+        # 1. 判断是否为 antman 脚本（包含 antman 关键词，且不是 git 仓库）
+        if [[ "$SOURCE" == *"antman"* ]] && [[ "$SOURCE" != *.git ]] && [[ "$SOURCE" != *"/tree/"* ]]; then
+            echo "Detected antman script"
+            wget -O antman.sh "$SOURCE" || { echo "Download failed"; exit 1; }
+            chmod +x antman.sh
+            CLANG_VERSION=$(echo "$BRANCH" | sed 's/clang-//g' | sed 's/^v//g')
+            if [ -z "$CLANG_VERSION" ]; then
+                CLANG_VERSION="18"
             fi
-        else
-            # ---------- 非 git 类型（直接下载文件） ----------
-            if [[ "$SOURCE" == *.tar.xz ]] || [[ "$SOURCE" == *.txz ]]; then
-                wget -O clang.tar.xz "$SOURCE" || { echo "Download failed"; exit 1; }
-                mkdir -p clang-aosp
-                tar -C clang-aosp/ -xvf clang.tar.xz
-                
-            elif [[ "$SOURCE" == *.tar.gz ]] || [[ "$SOURCE" == *.tgz ]]; then
-                wget -O clang.tar.gz "$SOURCE" || { echo "Download failed"; exit 1; }
-                mkdir -p clang-aosp
-                tar -C clang-aosp/ -zxvf clang.tar.gz
-                
-            elif [[ "$SOURCE" == *.zip ]]; then
-                wget -O clang.zip "$SOURCE" || { echo "Download failed"; exit 1; }
-                mkdir -p clang-aosp
-                unzip -q clang.zip -d clang-aosp/
-                
-            elif [[ "$SOURCE" == *.sh ]] || [[ "$SOURCE" == *"antman"* ]]; then
-                # ===== antman (Neutron 工具链安装脚本) =====
-                echo "Downloading antman from: $SOURCE"
-                wget -O antman.sh "$SOURCE" || { echo "Download failed"; exit 1; }
-                chmod +x antman.sh
-                CLANG_VERSION=$(echo "$BRANCH" | sed 's/clang-//g' | sed 's/^v//g')
-                if [ -z "$CLANG_VERSION" ]; then
-                    CLANG_VERSION="18"
-                fi
-                echo "Installing Clang version: $CLANG_VERSION"
-                ./antman.sh --install="$CLANG_VERSION"
-                # antman 安装后的目录通常是 neutron-clang
-                if [ -d "neutron-clang" ]; then
-                    mv neutron-clang clang-aosp
-                else
-                    find . -maxdepth 1 -type d -name "*neutron*" -exec mv {} clang-aosp \; 2>/dev/null || true
-                fi
-                rm -f antman.sh
-                
-            elif [[ "$SOURCE" == *.py ]]; then
-                wget -O download.py "$SOURCE" || { echo "Download failed"; exit 1; }
-                python3 download.py
-                if [ -d "clang" ] && [ ! -d "clang-aosp" ]; then
-                    mv clang clang-aosp
-                fi
-                
+            echo "Installing Clang version: $CLANG_VERSION"
+            ./antman.sh --install="$CLANG_VERSION"
+            if [ -d "neutron-clang" ]; then
+                mv neutron-clang clang-aosp
             else
-                # 未知类型：尝试 wget 并自动解压
-                echo "Warning: Unknown source type, attempting to download and extract..."
-                wget -O clang.bin "$SOURCE" || { echo "Download failed"; exit 1; }
-                if tar -xf clang.bin -C . 2>/dev/null; then
-                    find . -maxdepth 1 -type d -name "*clang*" -exec mv {} clang-aosp \; 2>/dev/null || true
-                elif unzip -q clang.bin -d clang-aosp 2>/dev/null; then
-                    true
-                else
-                    echo "Error: Unable to extract $SOURCE"
-                    exit 1
-                fi
+                find . -maxdepth 1 -type d -name "*neutron*" -exec mv {} clang-aosp \; 2>/dev/null || true
+            fi
+            rm -f antman.sh
+            
+        # 2. 判断是否为压缩包（tar.xz, tar.gz, tgz, txz, zip）
+        elif [[ "$SOURCE" == *.tar.xz ]] || [[ "$SOURCE" == *.txz ]]; then
+            echo "Detected tar.xz archive"
+            wget -O clang.tar.xz "$SOURCE" || { echo "Download failed"; exit 1; }
+            mkdir -p clang-aosp
+            tar -C clang-aosp/ -xvf clang.tar.xz
+            
+        elif [[ "$SOURCE" == *.tar.gz ]] || [[ "$SOURCE" == *.tgz ]]; then
+            echo "Detected tar.gz archive"
+            wget -O clang.tar.gz "$SOURCE" || { echo "Download failed"; exit 1; }
+            mkdir -p clang-aosp
+            tar -C clang-aosp/ -zxvf clang.tar.gz
+            
+        elif [[ "$SOURCE" == *.zip ]]; then
+            echo "Detected zip archive"
+            wget -O clang.zip "$SOURCE" || { echo "Download failed"; exit 1; }
+            mkdir -p clang-aosp
+            unzip -q clang.zip -d clang-aosp/
+            
+        # 3. 判断是否为 Python 脚本
+        elif [[ "$SOURCE" == *.py ]]; then
+            echo "Detected Python script"
+            wget -O download.py "$SOURCE" || { echo "Download failed"; exit 1; }
+            python3 download.py
+            if [ -d "clang" ] && [ ! -d "clang-aosp" ]; then
+                mv clang clang-aosp
+            fi
+            
+        # 4. 判断是否为 Shell 脚本（.sh 结尾）
+        elif [[ "$SOURCE" == *.sh ]]; then
+            echo "Detected shell script"
+            wget -O script.sh "$SOURCE" || { echo "Download failed"; exit 1; }
+            chmod +x script.sh
+            ./script.sh
+            rm -f script.sh
+            
+        # 5. 最后判断是否为 Git 仓库（.git 结尾，或包含 github/gitlab/gitee 且不包含 raw.）
+        elif [[ "$SOURCE" == *.git ]] || [[ "$SOURCE" =~ github ]] || [[ "$SOURCE" =~ gitlab ]] || [[ "$SOURCE" =~ gitee ]]; then
+            # 但排除 raw.githubusercontent.com（这是文件下载地址，不是 git 仓库）
+            if [[ "$SOURCE" == *"raw.githubusercontent.com"* ]]; then
+                echo "Error: raw.githubusercontent.com is not a git repository. Please check your CUSTOM_CLANG_SOURCE."
+                echo "If you want to use antman, use: https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
+                exit 1
+            fi
+            echo "Detected Git repository"
+            echo "Cloning from: $SOURCE"
+            git clone "$SOURCE" -b "$BRANCH" clang-aosp --depth=1 || {
+                echo "Branch $BRANCH not found, trying default branch..."
+                git clone "$SOURCE" clang-aosp --depth=1
+            }
+            
+        # 6. 未知类型：尝试 wget 并自动解压
+        else
+            echo "Warning: Unknown source type, attempting to download and extract..."
+            wget -O clang.bin "$SOURCE" || { echo "Download failed"; exit 1; }
+            if tar -xf clang.bin -C . 2>/dev/null; then
+                find . -maxdepth 1 -type d -name "*clang*" -exec mv {} clang-aosp \; 2>/dev/null || true
+            elif unzip -q clang.bin -d clang-aosp 2>/dev/null; then
+                true
+            else
+                echo "Error: Unable to extract $SOURCE"
+                exit 1
             fi
         fi
         
