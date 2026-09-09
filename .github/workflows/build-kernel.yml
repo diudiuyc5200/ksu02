@@ -109,18 +109,103 @@ jobs:
       if: env.USE_CUSTOM_CLANG == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        if [[ ${{ env.CUSTOM_CLANG_SOURCE }} =~ git ]]; then
-            if [[ ${{ env.CUSTOM_CLANG_SOURCE }} == *'.tar.gz' ]]; then
-                wget -O clang.tar.gz ${{ env.CUSTOM_CLANG_SOURCE }}
-                mkdir clang-aosp
-                tar -C clang-aosp/ -zxvf clang.tar.gz
+        SOURCE="${{ env.CUSTOM_CLANG_SOURCE }}"
+        BRANCH="${{ env.CUSTOM_CLANG_BRANCH }}"
+        
+        # 判断是否包含 git 关键字（git 仓库通常包含 "github.com" 或 "gitlab.com" 或结尾为 ".git"）
+        if [[ "$SOURCE" =~ \.(git)$ ]] || [[ "$SOURCE" =~ (github|gitlab) ]]; then
+            # --- Git 仓库类型 ---
+            if [[ "$SOURCE" == *.tar.gz ]] || [[ "$SOURCE" == *.tar.xz ]] || [[ "$SOURCE" == *.tgz ]] || [[ "$SOURCE" == *.txz ]]; then
+                # 处理压缩包格式的 git 仓库（如某些 release 包）
+                if [[ "$SOURCE" == *.tar.xz ]] || [[ "$SOURCE" == *.txz ]]; then
+                    wget -O clang.tar.xz "$SOURCE"
+                    mkdir clang-aosp
+                    tar -C clang-aosp/ -xvf clang.tar.xz
+                elif [[ "$SOURCE" == *.tar.gz ]] || [[ "$SOURCE" == *.tgz ]]; then
+                    wget -O clang.tar.gz "$SOURCE"
+                    mkdir clang-aosp
+                    tar -C clang-aosp/ -zxvf clang.tar.gz
+                fi
             else
-                git clone ${{ env.CUSTOM_CLANG_SOURCE }} -b ${{ env.CUSTOM_CLANG_BRANCH }} clang-aosp --depth=1
+                # 标准 git clone
+                git clone "$SOURCE" -b "$BRANCH" clang-aosp --depth=1
             fi
         else
-            wget -O clang.zip ${{ env.CUSTOM_CLANG_SOURCE }}
-            mkdir clang-aosp
-            unzip clang.zip -d clang-aosp/
+            # --- 非 git 类型（直接下载文件） ---
+            # 判断文件扩展名
+            if [[ "$SOURCE" == *.tar.xz ]] || [[ "$SOURCE" == *.txz ]]; then
+                # tar.xz 格式
+                wget -O clang.tar.xz "$SOURCE"
+                mkdir clang-aosp
+                tar -C clang-aosp/ -xvf clang.tar.xz
+                
+            elif [[ "$SOURCE" == *.tar.gz ]] || [[ "$SOURCE" == *.tgz ]]; then
+                # tar.gz 格式
+                wget -O clang.tar.gz "$SOURCE"
+                mkdir clang-aosp
+                tar -C clang-aosp/ -zxvf clang.tar.gz
+                
+            elif [[ "$SOURCE" == *.zip ]]; then
+                # zip 格式
+                wget -O clang.zip "$SOURCE"
+                mkdir clang-aosp
+                unzip clang.zip -d clang-aosp/
+                
+            elif [[ "$SOURCE" == *.sh ]] || [[ "$SOURCE" == *"antman"* ]]; then
+                # ===== antman (Neutron 工具链安装脚本) =====
+                # 下载并执行 antman 脚本
+                wget -O antman.sh "$SOURCE"
+                chmod +x antman.sh
+                # antman 默认安装到当前目录的 neutron-clang 文件夹
+                # 需要根据 BRANCH 指定版本，例如 --install=18
+                CLANG_VERSION=$(echo "$BRANCH" | sed 's/clang-//g' | sed 's/^v//g')
+                if [ -z "$CLANG_VERSION" ]; then
+                    CLANG_VERSION="18"  # 默认版本
+                fi
+                ./antman.sh --install="$CLANG_VERSION"
+                # antman 安装后的目录通常是 neutron-clang，将其链接或重命名为 clang-aosp
+                if [ -d "neutron-clang" ]; then
+                    mv neutron-clang clang-aosp
+                else
+                    # 如果 antman 安装到了其他目录，查找并重命名
+                    find . -maxdepth 1 -type d -name "*neutron*" -exec mv {} clang-aosp \; 2>/dev/null || true
+                fi
+                # 清理安装脚本
+                rm -f antman.sh
+                
+            elif [[ "$SOURCE" == *.py ]]; then
+                # Python 脚本（如某些工具链下载器）
+                wget -O download.py "$SOURCE"
+                python3 download.py
+                # 根据脚本行为，可能需要调整输出目录名称
+                # 这里假设脚本会在当前目录生成 clang 相关文件夹
+                if [ -d "clang" ] && [ ! -d "clang-aosp" ]; then
+                    mv clang clang-aosp
+                fi
+                
+            else
+                # 未知类型，尝试作为普通 zip 或 tar 处理，或直接报错
+                echo "Warning: Unknown source type, trying wget and extracting..."
+                # 尝试用 tar 解压（自动检测格式）
+                wget -O clang.bin "$SOURCE"
+                if tar -xf clang.bin -C .; then
+                    # 解压成功，找到解压出的目录并重命名
+                    find . -maxdepth 1 -type d -name "*clang*" -exec mv {} clang-aosp \; 2>/dev/null || true
+                else
+                    # 解压失败，报错
+                    echo "Error: Unable to extract $SOURCE"
+                    exit 1
+                fi
+            fi
+        fi
+        
+        # 验证 clang-aosp 目录是否存在且包含 bin 目录
+        if [ -d "clang-aosp" ] && [ -d "clang-aosp/bin" ]; then
+            echo "Custom Clang downloaded successfully"
+            ls -la clang-aosp/bin/ | head -20
+        else
+            echo "Error: clang-aosp/bin not found. Download may have failed."
+            exit 1
         fi
 
     - name: Download Gcc-aosp
